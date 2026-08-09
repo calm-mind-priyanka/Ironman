@@ -6,9 +6,12 @@ class Config:
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "your_bot_token")
     
     # Dual Database Active Mode URIs (DB1 & DB2)
-    DATABASE_URI = os.environ.get("DATABASE_URI", "mongodb+srv://rajibchaun_db_user:Fa1SV672h6xrxFxR@cluster0.pfgtal2.mongodb.net/?appName=Cluster0")
+    DATABASE_URI = os.environ.get("DATABASE_URI", "mongodb+srv://cluster0...")
     DATABASE_URI_2 = os.environ.get("DATABASE_URI_2", "mongodb+srv://cluster1...")
     DATABASE_NAME = os.environ.get("DATABASE_NAME", "Cluster0")
     
     ADMINS = [int(admin) for admin in os.environ.get("ADMINS", "12345678").split()]
     LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL", "-100123456789"))
+    
+    # 📌 Hardcoded Auto-Index Channel ID (Replace with your actual channel ID)
+    AUTO_INDEX_CHANNEL = int(os.environ.get("AUTO_INDEX_CHANNEL", "-100987654321"))
