@@ -1,114 +1,333 @@
-import sys
-import traceback
-import logging
 import asyncio
-from pyrogram import Client
-from config import Config
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import importlib
+import logging
+import os
+import sys
 import threading
+import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 from motor.motor_asyncio import AsyncIOMotorClient
+from pyrogram import Client
 
-# Setup high-visibility logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
-logger = logging.getLogger("GodLevelDebugger")
+from config import Config
 
-# ==========================================
-# GOD-LEVEL DIAGNOSTIC & CRASH INTERCEPTOR
-# ==========================================
-def activate_god_tier_debugging():
-    original_excepthook = sys.excepthook
 
-    def god_mode_excepthook(exc_type, exc_value, exc_traceback):
-        logger.critical("=" * 70)
-        logger.critical("🚨 [GOD-LEVEL BUG DETECTOR] CRITICAL RUNTIME CRASH DETECTED 🚨")
-        logger.critical(f"• Error Category : {exc_type.__name__}")
-        logger.critical(f"• Exact Reason   : {exc_value}")
-        
-        tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
-        logger.critical("• Traceback & Faulty Code Lines:\n" + "".join(tb_lines))
-        logger.critical("=" * 70)
-        original_excepthook(exc_type, exc_value, exc_traceback)
+# ============================================================
+# LOGGING
+# ============================================================
 
-    sys.excepthook = god_mode_excepthook
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
+)
 
-# ==========================================
-# PRE-FLIGHT CONFIG & DATABASE VALIDATOR
-# ==========================================
-async def preflight_health_check():
-    logger.info("🔍 [DIAGNOSTIC] Running pre-flight system integrity checks...")
-    
-    if not Config.API_ID or not Config.API_HASH:
-        logger.critical("❌ [FATAL CONFIG ERROR]: API_ID or API_HASH is missing in config.py!")
-        sys.exit(1)
-        
-    if not Config.BOT_TOKEN:
-        logger.critical("❌ [FATAL CONFIG ERROR]: BOT_TOKEN is missing in config.py!")
-        sys.exit(1)
-        
-    if not Config.DATABASE_URI:
-        logger.critical("❌ [FATAL CONFIG ERROR]: DATABASE_URI is missing in config.py!")
-        sys.exit(1)
+logger = logging.getLogger("AutoFilterBot")
 
-    if hasattr(Config, "ADMINS") and not isinstance(Config.ADMINS, (list, set)):
-        logger.critical("❌ [FATAL CONFIG ERROR]: ADMINS must be a list in config.py!")
-        sys.exit(1)
 
-    # Test MongoDB live connection safely using an independent loop context
-    try:
-        logger.info("🔌 Testing MongoDB Atlas live connection...")
-        client = AsyncIOMotorClient(Config.DATABASE_URI, serverSelectionTimeoutMS=4000)
-        await client.admin.command('ping')
-        logger.info("✅ [DATABASE]: Connection healthy and verified!")
-    except Exception as db_err:
-        logger.critical("=" * 70)
-        logger.critical("❌ [FATAL DATABASE FAILURE]: Cannot connect to MongoDB!")
-        logger.critical(f"• Exact Error: {db_err}")
-        logger.critical("💡 [DIAGNOSIS]: Your MongoDB URI is wrong or IP is blocked.")
-        logger.critical("🛠️ [FIX]: Whitelist '0.0.0.0/0' in MongoDB Atlas Network Access.")
-        logger.critical("=" * 70)
-        sys.exit(1)
+# ============================================================
+# PLUGINS
+# ============================================================
 
-# ==========================================
-# WEB SERVER FOR HOSTING HEALTH CHECKS
-# ==========================================
+PLUGIN_MODULES = [
+    "plugins.start",
+    "plugins.settings",
+    "plugins.autofilter",
+    "plugins.index",
+    "plugins.search",
+    "plugins.forcesub",
+    "plugins.shortlink",
+    "plugins.p_s_qr",
+    "plugins.admin",
+]
+
+
+# ============================================================
+# BOT STATUS
+# ============================================================
+
+_bot_started = False
+
+
+# ============================================================
+# CONFIG CHECK
+# ============================================================
+
+def validate_config():
+    required = {
+        "API_ID": Config.API_ID,
+        "API_HASH": Config.API_HASH,
+        "BOT_TOKEN": Config.BOT_TOKEN,
+        "DATABASE_URI": Config.DATABASE_URI,
+        "DATABASE_NAME": Config.DATABASE_NAME,
+    }
+
+    missing = [
+        name
+        for name, value in required.items()
+        if not value
+    ]
+
+    if missing:
+        raise RuntimeError(
+            "Missing required configuration: "
+            + ", ".join(missing)
+        )
+
+    if not Config.DATABASE_URI_2:
+        raise RuntimeError(
+            "DATABASE_URI_2 is missing"
+        )
+
+
+# ============================================================
+# MONGODB CHECK
+# ============================================================
+
+async def check_databases():
+
+    logger.info("🔌 Checking MongoDB connection 1...")
+
+    client1 = AsyncIOMotorClient(
+        Config.DATABASE_URI,
+        serverSelectionTimeoutMS=8000,
+        connectTimeoutMS=8000,
+    )
+
+    await client1.admin.command("ping")
+
+    logger.info("✅ MongoDB connection 1 OK")
+
+
+    if Config.DATABASE_URI_2 != Config.DATABASE_URI:
+
+        logger.info("🔌 Checking MongoDB connection 2...")
+
+        client2 = AsyncIOMotorClient(
+            Config.DATABASE_URI_2,
+            serverSelectionTimeoutMS=8000,
+            connectTimeoutMS=8000,
+        )
+
+        await client2.admin.command("ping")
+
+        logger.info("✅ MongoDB connection 2 OK")
+
+    else:
+
+        logger.info(
+            "ℹ️ DATABASE_URI_2 is the same as DATABASE_URI"
+        )
+
+
+# ============================================================
+# PLUGIN CHECK
+# ============================================================
+
+def check_plugins():
+
+    logger.info(
+        "🔎 Checking plugin imports..."
+    )
+
+    failed = []
+
+    for module_name in PLUGIN_MODULES:
+
+        try:
+
+            importlib.import_module(module_name)
+
+            logger.info(
+                "✅ Plugin import OK: %s",
+                module_name
+            )
+
+        except Exception:
+
+            failed.append(module_name)
+
+            logger.exception(
+                "❌ Plugin import FAILED: %s",
+                module_name
+            )
+
+
+    if failed:
+
+        raise RuntimeError(
+            "Plugin import failed: "
+            + ", ".join(failed)
+        )
+
+    logger.info(
+        "✅ All plugins imported successfully"
+    )
+
+
+# ============================================================
+# KOYEB HEALTH SERVER
+# ============================================================
+
 class HealthHandler(BaseHTTPRequestHandler):
+
     def do_GET(self):
-        self.send_response(200)
+
+        status = (
+            200
+            if _bot_started
+            else 503
+        )
+
+        self.send_response(status)
+
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8"
+        )
+
         self.end_headers()
-        self.wfile.write(b"Bot is fully operational!")
+
+
+        if _bot_started:
+
+            self.wfile.write(
+                b"Telegram bot is running"
+            )
+
+        else:
+
+            self.wfile.write(
+                b"Telegram bot is starting"
+            )
+
+
     def log_message(self, format, *args):
         return
 
+
 def start_web_server():
-    server = HTTPServer(("0.0.0.0", 8000), HealthHandler)
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            "8000"
+        )
+    )
+
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    logger.info(
+        "🌐 Health server listening on port %s",
+        port
+    )
+
     server.serve_forever()
 
-# ==========================================
-# MAIN APPLICATION INITIALIZATION
-# ==========================================
+
+# ============================================================
+# PYROGRAM CLIENT
+# ============================================================
+
 app = Client(
     "AutoFilterBot",
+
     api_id=Config.API_ID,
+
     api_hash=Config.API_HASH,
+
     bot_token=Config.BOT_TOKEN,
-    plugins=dict(root="plugins")
+
+    plugins={
+        "root": "plugins"
+    },
 )
 
+
+# ============================================================
+# STARTUP CHECKS
+# ============================================================
+
+async def startup_checks():
+
+    logger.info(
+        "🔍 Checking configuration..."
+    )
+
+    validate_config()
+
+    logger.info(
+        "✅ Configuration OK"
+    )
+
+
+    check_plugins()
+
+
+    await check_databases()
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
 if __name__ == "__main__":
-    print("🤖 Advanced Auto-Filter Bot is starting up under God-Level Debug Mode...")
-    activate_god_tier_debugging()
-    
-    # Spin up background keep-alive web server
-    threading.Thread(target=start_web_server, daemon=True).start()
-    
-    # Fix event loop conflict cleanly for Python 3.10+
+
+    logger.info(
+        "🤖 AutoFilterBot starting..."
+    )
+
+
+    # Start Koyeb health server
+    threading.Thread(
+        target=start_web_server,
+        daemon=True
+    ).start()
+
+
+    # Run startup checks
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(preflight_health_check())
-    except Exception as e:
-        logger.critical(f"❌ Startup sequence aborted: {e}")
+
+        asyncio.run(
+            startup_checks()
+        )
+
+    except Exception as exc:
+
+        logger.critical(
+            "❌ Startup checks failed: %s",
+            exc
+        )
+
+        logger.critical(
+            traceback.format_exc()
+        )
+
         sys.exit(1)
-        
-    # Launch Pyrogram natively
-    app.run()
+
+
+    # Start Telegram bot
+    try:
+
+        logger.info(
+            "🚀 Starting Pyrogram..."
+        )
+
+        app.run()
+
+        _bot_started = True
+
+    except Exception:
+
+        logger.critical(
+            "❌ Pyrogram stopped/crashed"
+        )
+
+        logger.critical(
+            traceback.format_exc()
+        )
+
+        sys.exit(1)
