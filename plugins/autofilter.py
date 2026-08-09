@@ -1,174 +1,865 @@
 import re
 import asyncio
+import logging
+
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
 from spellchecker import SpellChecker
-from motor.motor_asyncio import AsyncIOMotorClient
-from config import Config
+
+from db import files_col_1, files_col_2
 from plugins.settings import get_settings
 
-# Database Clients using your Config class
-db1_client = AsyncIOMotorClient(Config.DATABASE_URI)
-db1 = db1_client[Config.DATABASE_NAME]
-files_col_1 = db1["files"]
 
-db2_client = AsyncIOMotorClient(Config.DATABASE_URI_2)
-db2 = db2_client[Config.DATABASE_NAME]
-files_col_2 = db2["files"]
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# SPELL CHECKER
+# ============================================================
 
 spell = SpellChecker()
 
-# Standard lists for filters
-LANGUAGES = ["hindi", "english", "tamil", "telugu", "kannada", "malayalam", "bengali", "marathi", "punjabi", "gujarati"]
-QUALITIES = ["240p", "360p", "480p", "720p", "1080p", "2160p", "HDRip", "WEB-DL", "BluRay", "WEBRip", "CAM", "HDTC", "HDTS"]
-SEASONS = [f"season {i}" for i in range(1, 21)]
+
+# ============================================================
+# FILTER LISTS
+# ============================================================
+
+LANGUAGES = [
+    "hindi",
+    "english",
+    "tamil",
+    "telugu",
+    "kannada",
+    "malayalam",
+    "bengali",
+    "marathi",
+    "punjabi",
+    "gujarati"
+]
+
+QUALITIES = [
+    "240p",
+    "360p",
+    "480p",
+    "720p",
+    "1080p",
+    "2160p",
+    "HDRip",
+    "WEB-DL",
+    "BluRay",
+    "WEBRip",
+    "CAM",
+    "HDTC",
+    "HDTS"
+]
+
+SEASONS = [
+    f"season {i}"
+    for i in range(1, 21)
+]
+
+
+# ============================================================
+# DUAL DATABASE SEARCH
+# ============================================================
 
 async def search_dual_db(regex, limit):
-    c1 = files_col_1.find({"file_name": {"$regex": regex}}).limit(limit)
-    c2 = files_col_2.find({"file_name": {"$regex": regex}}).limit(limit)
-    res1, res2 = await asyncio.gather(c1.to_list(length=limit), c2.to_list(length=limit))
-    return res1 + res2
 
-@Client.on_message(filters.text & ~filters.private)
-async def group_autofilter_engine(client: Client, message: Message):
-    # Ignore bot commands explicitly typed inside text messages
-    if message.text.startswith("/") or message.text.startswith("!"):
-        return
+    try:
 
-    chat_id = message.chat.id
-    settings = await get_settings(chat_id)
-    if not settings["auto_filter"]:
-        return
+        cursor1 = files_col_1.find(
+            {
+                "file_name": {
+                    "$regex": regex
+                }
+            }
+        ).limit(limit)
 
-    raw_query = message.text.strip()
-    if len(raw_query) < 2:
-        return
+        cursor2 = files_col_2.find(
+            {
+                "file_name": {
+                    "$regex": regex
+                }
+            }
+        ).limit(limit)
 
-    query = raw_query
-    if settings.get("spell_check", True):
-        words = raw_query.split()
-        corrected = [spell.correction(w) or w for w in words]
-        query = " ".join(corrected)
+        results1, results2 = await asyncio.gather(
+            cursor1.to_list(length=limit),
+            cursor2.to_list(length=limit)
+        )
 
-    regex = re.compile(re.escape(query), re.IGNORECASE)
-    limit = settings["max_results"]
-    files = await search_dual_db(regex, limit)
+        return results1 + results2
 
-    if not files and query != raw_query:
+    except Exception as e:
+
+        logger.exception(
+            "Dual database search failed: %s",
+            e
+        )
+
+        return []
+
+
+# ============================================================
+# MAIN GROUP AUTOFILTER
+# ============================================================
+
+@Client.on_message(
+    filters.text & ~filters.private
+)
+async def group_autofilter_engine(
+    client: Client,
+    message: Message
+):
+
+    try:
+
+        if not message.text:
+            return
+
+        # Ignore commands
+        if (
+            message.text.startswith("/")
+            or message.text.startswith("!")
+        ):
+            return
+
+        chat_id = message.chat.id
+
+        settings = await get_settings(
+            chat_id
+        )
+
+        if not settings.get(
+            "auto_filter",
+            True
+        ):
+            return
+
+        raw_query = message.text.strip()
+
+        if len(raw_query) < 2:
+            return
+
         query = raw_query
-        regex = re.compile(re.escape(query), re.IGNORECASE)
-        files = await search_dual_db(regex, limit)
 
-    if not files:
-        return
 
-    text = f"📂 **Here I Found For Your Search** `{query}`\n\n"
-    for i, f in enumerate(files[:limit], 1):
-        fname = f.get("file_name", "File")
-        fsize = round(f.get("file_size", 0) / (1024 * 1024), 2)
-        text += f"{i}. `{fsize} MB` | {fname}\n\n"
+        # ====================================================
+        # SPELL CHECK
+        # ====================================================
 
-    text += "⚠️ **THIS MESSAGE WILL BE AUTO DELETE AFTER 5 MINUTES TO AVOID COPYRIGHT ISSUES** 🗑️"
+        if settings.get(
+            "spell_check",
+            True
+        ):
 
-    buttons = [
-        [
-            InlineKeyboardButton("LANGUAGE", callback_data=f"lang_menu#{query}"),
-            InlineKeyboardButton("QUALITY", callback_data=f"qual_menu#{query}")
-        ],
-        [InlineKeyboardButton("SEASON", callback_data=f"season_menu#{query}")],
-        [InlineKeyboardButton("SEND ALL", callback_data=f"send_all#{query}")],
-        [InlineKeyboardButton("1 / 1", callback_data="page_info"), InlineKeyboardButton("NEXT >>", callback_data=f"next_page#{query}#1")]
-    ]
+            words = raw_query.split()
 
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+            corrected = [
+                spell.correction(word) or word
+                for word in words
+            ]
 
-def build_menu_buttons(items, query_text, row_size=3):
-    buttons, row = [], []
+            query = " ".join(
+                corrected
+            )
+
+
+        # ====================================================
+        # SEARCH
+        # ====================================================
+
+        regex = re.compile(
+            re.escape(query),
+            re.IGNORECASE
+        )
+
+        limit = int(
+            settings.get(
+                "max_results",
+                10
+            )
+        )
+
+        files = await search_dual_db(
+            regex,
+            limit
+        )
+
+
+        # ====================================================
+        # FALLBACK TO ORIGINAL QUERY
+        # ====================================================
+
+        if (
+            not files
+            and query != raw_query
+        ):
+
+            query = raw_query
+
+            regex = re.compile(
+                re.escape(query),
+                re.IGNORECASE
+            )
+
+            files = await search_dual_db(
+                regex,
+                limit
+            )
+
+
+        if not files:
+            return
+
+
+        # ====================================================
+        # BUILD RESULT TEXT
+        # ====================================================
+
+        text = (
+            f"📂 **Here I Found For Your Search** "
+            f"`{query}`\n\n"
+        )
+
+        for i, file_data in enumerate(
+            files[:limit],
+            1
+        ):
+
+            file_name = file_data.get(
+                "file_name",
+                "File"
+            )
+
+            file_size = round(
+                file_data.get(
+                    "file_size",
+                    0
+                ) / (1024 * 1024),
+                2
+            )
+
+            text += (
+                f"{i}. `{file_size} MB` | "
+                f"{file_name}\n\n"
+            )
+
+        text += (
+            "⚠️ **THIS MESSAGE WILL BE AUTO DELETE "
+            "AFTER 5 MINUTES TO AVOID COPYRIGHT ISSUES** 🗑️"
+        )
+
+
+        # ====================================================
+        # BUTTONS
+        # ====================================================
+
+        buttons = [
+
+            [
+                InlineKeyboardButton(
+                    "LANGUAGE",
+                    callback_data=f"lang_menu#{query}"
+                ),
+
+                InlineKeyboardButton(
+                    "QUALITY",
+                    callback_data=f"qual_menu#{query}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "SEASON",
+                    callback_data=f"season_menu#{query}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "SEND ALL",
+                    callback_data=f"send_all#{query}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "1 / 1",
+                    callback_data="page_info"
+                ),
+
+                InlineKeyboardButton(
+                    "NEXT >>",
+                    callback_data=f"next_page#{query}#1"
+                )
+            ]
+        ]
+
+
+        await message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                buttons
+            )
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Autofilter engine error: %s",
+            e
+        )
+
+
+# ============================================================
+# FILTER BUTTON BUILDER
+# ============================================================
+
+def build_menu_buttons(
+    items,
+    query_text,
+    row_size=3
+):
+
+    buttons = []
+    row = []
+
     for item in items:
-        row.append(InlineKeyboardButton(str(item).capitalize(), callback_data=f"apply_filter#{query_text}#{item}"))
+
+        row.append(
+            InlineKeyboardButton(
+                str(item).capitalize(),
+                callback_data=(
+                    f"apply_filter#{query_text}#{item}"
+                )
+            )
+        )
+
         if len(row) == row_size:
+
             buttons.append(row)
             row = []
+
+
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("<< Back", callback_data=f"back_main#{query_text}")])
+
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "<< Back",
+                callback_data=(
+                    f"back_main#{query_text}"
+                )
+            )
+        ]
+    )
+
     return buttons
 
-@Client.on_callback_query(filters.regex("^lang_menu#"))
-async def lang_menu(client, query):
-    qt = query.data.split("#")[1]
-    await query.message.edit_text(f"🌍 **Select Language for:** `{qt}`", reply_markup=InlineKeyboardMarkup(build_menu_buttons(LANGUAGES, qt, 3)))
-    await query.answer()
 
-@Client.on_callback_query(filters.regex("^qual_menu#"))
-async def qual_menu(client, query):
-    qt = query.data.split("#")[1]
-    await query.message.edit_text(f"🎬 **Select Quality for:** `{qt}`", reply_markup=InlineKeyboardMarkup(build_menu_buttons(QUALITIES, qt, 3)))
-    await query.answer()
+# ============================================================
+# LANGUAGE MENU
+# ============================================================
 
-@Client.on_callback_query(filters.regex("^season_menu#"))
-async def season_menu(client, query):
-    qt = query.data.split("#")[1]
-    await query.message.edit_text(f"📺 **Select Season for:** `{qt}`", reply_markup=InlineKeyboardMarkup(build_menu_buttons(SEASONS, qt, 4)))
-    await query.answer()
+@Client.on_callback_query(
+    filters.regex(r"^lang_menu#")
+)
+async def lang_menu(
+    client: Client,
+    query: CallbackQuery
+):
 
-@Client.on_callback_query(filters.regex("^apply_filter#"))
-async def apply_filter(client, query):
-    _, base_q, tag = query.data.split("#")
-    files = await search_dual_db(re.compile(re.escape(f"{base_q} {tag}"), re.IGNORECASE), 15)
-    
-    if not files:
-        await query.answer(f"❌ No files found for '{tag}'!", show_alert=True)
-        return
+    try:
 
-    text = f"📂 **Results for:** `{base_q}` | **Filter:** `{tag}`\n\n"
-    for i, f in enumerate(files, 1):
-        fsize = round(f.get("file_size", 0) / (1024 * 1024), 2)
-        text += f"{i}. `{fsize} MB` | {f.get('file_name', 'File')}\n\n"
-    text += "⚠️ **THIS MESSAGE WILL BE AUTO DELETE AFTER 5 MINUTES** 🗑️"
+        qt = query.data.split(
+            "#",
+            1
+        )[1]
 
-    buttons = [
-        [InlineKeyboardButton("LANGUAGE", callback_data=f"lang_menu#{base_q}"), InlineKeyboardButton("QUALITY", callback_data=f"qual_menu#{base_q}")],
-        [InlineKeyboardButton("SEASON", callback_data=f"season_menu#{base_q}")],
-        [InlineKeyboardButton("SEND ALL", callback_data=f"send_all#{base_q}")],
-        [InlineKeyboardButton("<< Back to All Results", callback_data=f"back_main#{base_q}")]
-    ]
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-    await query.answer(f"Filtered by {tag}!")
+        await query.message.edit_text(
+            f"🌍 **Select Language for:** `{qt}`",
+            reply_markup=InlineKeyboardMarkup(
+                build_menu_buttons(
+                    LANGUAGES,
+                    qt,
+                    3
+                )
+            )
+        )
 
-@Client.on_callback_query(filters.regex("^send_all#"))
-async def send_all(client, query):
-    qt = query.data.split("#")[1]
-    files = await search_dual_db(re.compile(re.escape(qt), re.IGNORECASE), 15)
-    if not files:
-        await query.answer("❌ No files found!", show_alert=True)
-        return
-    await query.answer(f"📤 Sending {len(files)} files...", show_alert=False)
-    for f in files:
-        try:
-            await client.send_cached_media(chat_id=query.message.chat.id, file_id=f.get("file_id"))
-            await asyncio.sleep(0.5)
-        except Exception:
-            pass
+        await query.answer()
 
-@Client.on_callback_query(filters.regex("^back_main#"))
-async def back_main(client, query):
-    qt = query.data.split("#")[1]
-    files = await search_dual_db(re.compile(re.escape(qt), re.IGNORECASE), 10)
-    if not files:
-        await query.answer("❌ No results found!", show_alert=True)
-        return
-    text = f"📂 **Here I Found For Your Search** `{qt}`\n\n"
-    for i, f in enumerate(files, 1):
-        fsize = round(f.get("file_size", 0) / (1024 * 1024), 2)
-        text += f"{i}. `{fsize} MB` | {f.get('file_name', 'File')}\n\n"
-    text += "⚠️ **THIS MESSAGE WILL BE AUTO DELETE AFTER 5 MINUTES TO AVOID COPYRIGHT ISSUES** 🗑️"
-    
-    buttons = [
-        [InlineKeyboardButton("LANGUAGE", callback_data=f"lang_menu#{qt}"), InlineKeyboardButton("QUALITY", callback_data=f"qual_menu#{qt}")],
-        [InlineKeyboardButton("SEASON", callback_data=f"season_menu#{qt}")],
-        [InlineKeyboardButton("SEND ALL", callback_data=f"send_all#{qt}")],
-        [InlineKeyboardButton("1 / 1", callback_data="page_info"), InlineKeyboardButton("NEXT >>", callback_data=f"next_page#{qt}#1")]
-    ]
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-    await query.answer("Refreshed!")
+    except Exception as e:
+
+        logger.exception(
+            "Language menu error: %s",
+            e
+        )
+
+        await query.answer(
+            "⚠️ Failed to open language menu.",
+            show_alert=True
+        )
+
+
+# ============================================================
+# QUALITY MENU
+# ============================================================
+
+@Client.on_callback_query(
+    filters.regex(r"^qual_menu#")
+)
+async def qual_menu(
+    client: Client,
+    query: CallbackQuery
+):
+
+    try:
+
+        qt = query.data.split(
+            "#",
+            1
+        )[1]
+
+        await query.message.edit_text(
+            f"🎬 **Select Quality for:** `{qt}`",
+            reply_markup=InlineKeyboardMarkup(
+                build_menu_buttons(
+                    QUALITIES,
+                    qt,
+                    3
+                )
+            )
+        )
+
+        await query.answer()
+
+    except Exception as e:
+
+        logger.exception(
+            "Quality menu error: %s",
+            e
+        )
+
+        await query.answer(
+            "⚠️ Failed to open quality menu.",
+            show_alert=True
+        )
+
+
+# ============================================================
+# SEASON MENU
+# ============================================================
+
+@Client.on_callback_query(
+    filters.regex(r"^season_menu#")
+)
+async def season_menu(
+    client: Client,
+    query: CallbackQuery
+):
+
+    try:
+
+        qt = query.data.split(
+            "#",
+            1
+        )[1]
+
+        await query.message.edit_text(
+            f"📺 **Select Season for:** `{qt}`",
+            reply_markup=InlineKeyboardMarkup(
+                build_menu_buttons(
+                    SEASONS,
+                    qt,
+                    4
+                )
+            )
+        )
+
+        await query.answer()
+
+    except Exception as e:
+
+        logger.exception(
+            "Season menu error: %s",
+            e
+        )
+
+        await query.answer(
+            "⚠️ Failed to open season menu.",
+            show_alert=True
+        )
+
+
+# ============================================================
+# APPLY FILTER
+# ============================================================
+
+@Client.on_callback_query(
+    filters.regex(r"^apply_filter#")
+)
+async def apply_filter(
+    client: Client,
+    query: CallbackQuery
+):
+
+    try:
+
+        parts = query.data.split(
+            "#",
+            2
+        )
+
+        if len(parts) != 3:
+
+            await query.answer(
+                "⚠️ Invalid filter.",
+                show_alert=True
+            )
+
+            return
+
+        _, base_q, tag = parts
+
+
+        search_text = (
+            f"{base_q} {tag}"
+        )
+
+        files = await search_dual_db(
+            re.compile(
+                re.escape(search_text),
+                re.IGNORECASE
+            ),
+            15
+        )
+
+
+        if not files:
+
+            await query.answer(
+                f"❌ No files found for '{tag}'!",
+                show_alert=True
+            )
+
+            return
+
+
+        text = (
+            f"📂 **Results for:** `{base_q}`\n"
+            f"**Filter:** `{tag}`\n\n"
+        )
+
+
+        for i, file_data in enumerate(
+            files,
+            1
+        ):
+
+            file_size = round(
+                file_data.get(
+                    "file_size",
+                    0
+                ) / (1024 * 1024),
+                2
+            )
+
+            text += (
+                f"{i}. `{file_size} MB` | "
+                f"{file_data.get('file_name', 'File')}\n\n"
+            )
+
+
+        text += (
+            "⚠️ **THIS MESSAGE WILL BE AUTO DELETE "
+            "AFTER 5 MINUTES** 🗑️"
+        )
+
+
+        buttons = [
+
+            [
+                InlineKeyboardButton(
+                    "LANGUAGE",
+                    callback_data=f"lang_menu#{base_q}"
+                ),
+
+                InlineKeyboardButton(
+                    "QUALITY",
+                    callback_data=f"qual_menu#{base_q}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "SEASON",
+                    callback_data=f"season_menu#{base_q}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "SEND ALL",
+                    callback_data=f"send_all#{base_q}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "<< Back to All Results",
+                    callback_data=f"back_main#{base_q}"
+                )
+            ]
+        ]
+
+
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                buttons
+            )
+        )
+
+        await query.answer(
+            f"Filtered by {tag}!"
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Apply filter error: %s",
+            e
+        )
+
+        await query.answer(
+            "⚠️ Failed to apply filter.",
+            show_alert=True
+        )
+
+
+# ============================================================
+# SEND ALL
+# ============================================================
+
+@Client.on_callback_query(
+    filters.regex(r"^send_all#")
+)
+async def send_all(
+    client: Client,
+    query: CallbackQuery
+):
+
+    try:
+
+        qt = query.data.split(
+            "#",
+            1
+        )[1]
+
+        files = await search_dual_db(
+            re.compile(
+                re.escape(qt),
+                re.IGNORECASE
+            ),
+            15
+        )
+
+
+        if not files:
+
+            await query.answer(
+                "❌ No files found!",
+                show_alert=True
+            )
+
+            return
+
+
+        await query.answer(
+            f"📤 Sending {len(files)} files..."
+        )
+
+
+        for file_data in files:
+
+            try:
+
+                file_id = file_data.get(
+                    "file_id"
+                )
+
+                if not file_id:
+                    continue
+
+                await client.send_cached_media(
+                    chat_id=query.message.chat.id,
+                    file_id=file_id
+                )
+
+                await asyncio.sleep(
+                    0.5
+                )
+
+            except Exception as e:
+
+                logger.warning(
+                    "Failed to send file: %s",
+                    e
+                )
+
+
+    except Exception as e:
+
+        logger.exception(
+            "Send all error: %s",
+            e
+        )
+
+        await query.answer(
+            "⚠️ Failed to send files.",
+            show_alert=True
+        )
+
+
+# ============================================================
+# BACK TO MAIN RESULTS
+# ============================================================
+
+@Client.on_callback_query(
+    filters.regex(r"^back_main#")
+)
+async def back_main(
+    client: Client,
+    query: CallbackQuery
+):
+
+    try:
+
+        qt = query.data.split(
+            "#",
+            1
+        )[1]
+
+        files = await search_dual_db(
+            re.compile(
+                re.escape(qt),
+                re.IGNORECASE
+            ),
+            10
+        )
+
+
+        if not files:
+
+            await query.answer(
+                "❌ No results found!",
+                show_alert=True
+            )
+
+            return
+
+
+        text = (
+            f"📂 **Here I Found For Your Search** "
+            f"`{qt}`\n\n"
+        )
+
+
+        for i, file_data in enumerate(
+            files,
+            1
+        ):
+
+            file_size = round(
+                file_data.get(
+                    "file_size",
+                    0
+                ) / (1024 * 1024),
+                2
+            )
+
+            text += (
+                f"{i}. `{file_size} MB` | "
+                f"{file_data.get('file_name', 'File')}\n\n"
+            )
+
+
+        text += (
+            "⚠️ **THIS MESSAGE WILL BE AUTO DELETE "
+            "AFTER 5 MINUTES TO AVOID COPYRIGHT ISSUES** 🗑️"
+        )
+
+
+        buttons = [
+
+            [
+                InlineKeyboardButton(
+                    "LANGUAGE",
+                    callback_data=f"lang_menu#{qt}"
+                ),
+
+                InlineKeyboardButton(
+                    "QUALITY",
+                    callback_data=f"qual_menu#{qt}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "SEASON",
+                    callback_data=f"season_menu#{qt}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "SEND ALL",
+                    callback_data=f"send_all#{qt}"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "1 / 1",
+                    callback_data="page_info"
+                ),
+
+                InlineKeyboardButton(
+                    "NEXT >>",
+                    callback_data=f"next_page#{qt}#1"
+                )
+            ]
+        ]
+
+
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                buttons
+            )
+        )
+
+        await query.answer(
+            "Refreshed!"
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Back main error: %s",
+            e
+        )
+
+        await query.answer(
+            "⚠️ Failed to refresh results.",
+            show_alert=True
+        )
