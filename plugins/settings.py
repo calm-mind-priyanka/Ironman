@@ -143,7 +143,7 @@ async def back_to_main_settings(client: Client, query: CallbackQuery):
 async def close_settings_callback(client: Client, query: CallbackQuery):
     await query.message.delete()
 
-@Client.on_message(filters.text & filters.private & ~filters.command)
+@Client.on_message(filters.text & filters.private & ~filters.command())
 async def capture_group_settings_inputs(client: Client, message: Message):
     user_id = message.from_user.id
     if user_id not in GROUP_INPUT_STATE:
