@@ -23,7 +23,7 @@ async def search_dual_db(regex, limit):
     res1, res2 = await asyncio.gather(c1.to_list(length=limit), c2.to_list(length=limit))
     return res1 + res2
 
-@Client.on_message(filters.text & ~filters.private & ~filters.command)
+@Client.on_message(filters.text & ~filters.private & ~filters.command())
 async def group_autofilter_engine(client: Client, message: Message):
     chat_id = message.chat.id
     settings = await get_settings(chat_id)
@@ -53,20 +53,32 @@ async def group_autofilter_engine(client: Client, message: Message):
         return
 
     if settings["result_mode"]:
-        text = f"🎯 **Results for:** `{query}`\n\n(Dual DB Active ⚡)"
-        buttons = [[InlineKeyboardButton(f.get("file_name", "File"), callback_data=f"get_file#{f.get('_id')}")] for f in files[:limit]]
+        # --- BUTTON MODE WITH WARNING & NUMBERED LAYOUT ---
+        text = f"📂 **Here are your results for:** `{query}`\n\n"
+        text += "⚠️ **Warning:** Files may be deleted automatically or protected. Please use them quickly!\n\n"
+        text += "✨ Quality & Season matched successfully (Dual DB Active ⚡)"
+
+        buttons = []
+        for index, f in enumerate(files[:limit], 1):
+            fname = f.get("file_name", "File")
+            buttons.append([InlineKeyboardButton(f"{index}. {fname[:45]}", callback_data=f"get_file#{f.get('_id')}M")])
+
         buttons.append([
             InlineKeyboardButton("📥 Send All", callback_data=f"send_all#{query}"),
-            InlineKeyboardButton("1/1 📄", callback_data="page_info"),
+            InlineKeyboardButton("1/2 📄", callback_data="page_info"),
             InlineKeyboardButton("Next >>", callback_data="next_page#1")
         ])
         await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
     else:
+        # --- TEXT MODE ---
         text = f"🎯 **Results for:** `{query}` (Dual DB Active)\n\n"
         for i, f in enumerate(files[:limit], 1):
             text += f"{i}. {f.get('file_name', 'File')}\n"
+        
+        text += "\n⚠️ **Warning:** Files may be protected or auto-deleted."
+        
         buttons = [
             [InlineKeyboardButton("📥 Send All", callback_data=f"send_all#{query}")],
-            [InlineKeyboardButton("<<", callback_data="prev#0"), InlineKeyboardButton("1/1", callback_data="page_info"), InlineKeyboardButton("Next >>", callback_data="next#1")]
+            [InlineKeyboardButton("<<", callback_data="prev#0"), InlineKeyboardButton("1/2", callback_data="page_info"), InlineKeyboardButton("Next >>", callback_data="next#1")]
         ]
         await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
