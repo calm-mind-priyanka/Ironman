@@ -47,8 +47,11 @@ async def remove_premium_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("broadcast") & filters.private)
 async def broadcast_cmd(client: Client, message: Message):
-    if message.from_user.id not in Config.ADMINS or not message.reply_to_message:
-        return
+    if message.from_user.id not in Config.ADMINS:
+        return await message.reply_text("⚠️ Unauthorized!")
+    if not message.reply_to_message:
+        return await message.reply_text("⚠️ Please reply to a message to broadcast it!")
+    
     all_users = await users_col.find({}).to_list(length=None)
     sent, failed = 0, 0
     status_msg = await message.reply_text(f"🚀 Broadcasting to `{len(all_users)}` users...")
