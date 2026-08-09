@@ -67,7 +67,7 @@ async def index_start_command(client: Client, message: Message):
     )
 
 
-@Client.on_message(filters.private & ~filters.command)
+@Client.on_message(filters.private & filters.text)
 async def process_bulk_index_state(client: Client, message: Message):
     user_id = message.from_user.id
     if user_id not in INDEX_STATE:
