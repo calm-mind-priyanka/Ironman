@@ -1,41 +1,72 @@
 import asyncio
+import logging
+
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from motor.motor_asyncio import AsyncIOMotorClient
+
 from config import Config
-import logging
+from db import files_col_1, files_col_2
+
 
 logger = logging.getLogger(__name__)
 
-try:
-    db1_client = AsyncIOMotorClient(Config.DATABASE_URI)
-    db1 = db1_client[getattr(Config, "DATABASE_NAME", "AutoFilterBot")]
-    files_col_1 = db1["files"]
-except Exception as e:
-    logger.error(f"Failed to initialize database 1 files collection: {e}")
 
-try:
-    db2_client = AsyncIOMotorClient(Config.DATABASE_URI_2)
-    db2 = db2_client[getattr(Config, "DATABASE_NAME", "AutoFilterBot")]
-    files_col_2 = db2["files"]
-except Exception as e:
-    logger.error(f"Failed to initialize database 2 files collection: {e}")
+# ============================================================
+# INDEX STATE
+# ============================================================
 
 INDEX_STATE = {}
 
-@Client.on_message((filters.document | filters.video))
-async def auto_index_uploaded_files(client: Client, message: Message):
+
+# ============================================================
+# AUTO INDEX UPLOADED FILES
+# ============================================================
+
+@Client.on_message(
+    filters.document | filters.video
+)
+async def auto_index_uploaded_files(
+    client: Client,
+    message: Message
+):
+
     try:
-        if not getattr(Config, "AUTO_INDEX_CHANNEL", None) or message.chat.id != Config.AUTO_INDEX_CHANNEL:
+
+        auto_index_channel = getattr(
+            Config,
+            "AUTO_INDEX_CHANNEL",
+            None
+        )
+
+        if not auto_index_channel:
             return
 
-        media = message.document or message.video
-        if not media or not media.file_name:
+        if message.chat.id != auto_index_channel:
             return
+
+
+        media = (
+            message.document
+            or message.video
+        )
+
+        if not media:
+            return
+
+        if not media.file_name:
+            return
+
 
         file_id = media.file_id
+
         file_name = media.file_name
-        clean_name = file_name.replace("_", " ").replace(".", " ")
+
+        clean_name = (
+            file_name
+            .replace("_", " ")
+            .replace(".", " ")
+        )
+
 
         file_data = {
             "file_name": clean_name,
@@ -46,99 +77,357 @@ async def auto_index_uploaded_files(client: Client, message: Message):
             "chat_id": message.chat.id
         }
 
-        if await files_col_1.find_one({"file_id": file_id}):
+
+        # Check database 1
+        if await files_col_1.find_one(
+            {
+                "file_id": file_id
+            }
+        ):
+
             return
 
-        await files_col_1.insert_one(file_data)
-        await files_col_2.insert_one(file_data)
-        logger.info(f"📥 [AUTO-INDEXED LIVE] -> {clean_name}")
-    except Exception as err:
-        logger.error(f"🚨 [AUTO-INDEX ERROR in index.py]: auto_index_uploaded_files failed", exc_info=True)
+
+        # Insert into database 1
+        await files_col_1.insert_one(
+            file_data
+        )
 
 
-@Client.on_message(filters.command("index") & filters.private)
-async def index_start_command(client: Client, message: Message):
+        # Insert into database 2
+        try:
+
+            if not await files_col_2.find_one(
+                {
+                    "file_id": file_id
+                }
+            ):
+
+                await files_col_2.insert_one(
+                    file_data
+                )
+
+        except Exception:
+
+            logger.exception(
+                "Failed to insert file into database 2"
+            )
+
+
+        logger.info(
+            "📥 [AUTO-INDEXED LIVE] -> %s",
+            clean_name
+        )
+
+
+    except Exception:
+
+        logger.error(
+            "🚨 [AUTO-INDEX ERROR]: "
+            "auto_index_uploaded_files failed",
+            exc_info=True
+        )
+
+
+# ============================================================
+# /INDEX
+# ============================================================
+
+@Client.on_message(
+    filters.command("index")
+    & filters.private
+)
+async def index_start_command(
+    client: Client,
+    message: Message
+):
+
     try:
-        if message.from_user.id not in getattr(Config, "ADMINS", []):
-            return await message.reply_text("⚠️ You are not authorized!")
 
-        INDEX_STATE[message.from_user.id] = {"step": "waiting_bulk_index_message"}
+        admins = getattr(
+            Config,
+            "ADMINS",
+            []
+        )
+
+
+        if message.from_user.id not in admins:
+
+            return await message.reply_text(
+                "⚠️ You are not authorized!"
+            )
+
+
+        INDEX_STATE[
+            message.from_user.id
+        ] = {
+            "step": "waiting_bulk_index_message"
+        }
+
+
         await message.reply_text(
             "📊 **Bulk Database Indexing**\n\n"
-            "Please **forward the LAST message** from the source channel you want to bulk scan.\n\n"
-            "⚠️ **Important:** Make sure the bot is an **Admin** in that source channel!\n\n"
+            "Please **forward the LAST message** "
+            "from the source channel you want to "
+            "bulk scan.\n\n"
+            "⚠️ **Important:** Make sure the bot "
+            "is an **Admin** in that source channel!\n\n"
             "Type /cancel to abort."
         )
-    except Exception as err:
-        logger.error(f"🚨 [CRITICAL COMMAND ERROR in index.py]: /index failed", exc_info=True)
-        await message.reply_text("⚠️ An error occurred while starting the index process.")
 
 
-@Client.on_message(filters.command("stats") & filters.private)
-async def database_stats_command(client: Client, message: Message):
+    except Exception:
+
+        logger.error(
+            "🚨 [CRITICAL COMMAND ERROR]: "
+            "/index failed",
+            exc_info=True
+        )
+
+        await message.reply_text(
+            "⚠️ An error occurred while "
+            "starting the index process."
+        )
+
+
+# ============================================================
+# /STATS
+# ============================================================
+
+@Client.on_message(
+    filters.command("stats")
+    & filters.private
+)
+async def database_stats_command(
+    client: Client,
+    message: Message
+):
+
     try:
-        if message.from_user.id not in getattr(Config, "ADMINS", []):
-            return await message.reply_text("⚠️ You are not authorized!")
 
-        # Fetch live counts from both databases
-        count_db1 = await files_col_1.count_documents({})
-        count_db2 = await files_col_2.count_documents({})
+        admins = getattr(
+            Config,
+            "ADMINS",
+            []
+        )
+
+
+        if message.from_user.id not in admins:
+
+            return await message.reply_text(
+                "⚠️ You are not authorized!"
+            )
+
+
+        count_db1 = (
+            await files_col_1.count_documents({})
+        )
+
+        count_db2 = (
+            await files_col_2.count_documents({})
+        )
+
+
+        if Config.DATABASE_URI == Config.DATABASE_URI_2:
+
+            database_status = (
+                "ℹ️ Both collections use the "
+                "same MongoDB URI."
+            )
+
+        else:
+
+            database_status = (
+                "✅ Both databases are configured."
+            )
+
 
         stats_text = (
-            f"📊 **Database File Statistics:**\n\n"
-            f"• **Database 1 (`files`):** `{count_db1}` files\n"
-            f"• **Database 2 (`files`):** `{count_db2}` files\n\n"
-            f"✅ Both databases are active and synchronized."
+            "📊 **Database File Statistics:**\n\n"
+            f"• **Database 1 (`files`):** "
+            f"`{count_db1}` files\n"
+            f"• **Database 2 (`files`):** "
+            f"`{count_db2}` files\n\n"
+            f"{database_status}"
         )
-        await message.reply_text(stats_text)
-    except Exception as err:
-        logger.error(f"🚨 [CRITICAL COMMAND ERROR in index.py]: /stats failed", exc_info=True)
-        await message.reply_text("⚠️ Failed to fetch database statistics.")
 
 
-@Client.on_message(filters.private & filters.text)
-async def process_bulk_index_state(client: Client, message: Message):
+        await message.reply_text(
+            stats_text
+        )
+
+
+    except Exception:
+
+        logger.error(
+            "🚨 [CRITICAL COMMAND ERROR]: "
+            "/stats failed",
+            exc_info=True
+        )
+
+        await message.reply_text(
+            "⚠️ Failed to fetch "
+            "database statistics."
+        )
+
+
+# ============================================================
+# BULK INDEX INPUT
+# ============================================================
+
+@Client.on_message(
+    filters.private & filters.text
+)
+async def process_bulk_index_state(
+    client: Client,
+    message: Message
+):
+
     try:
+
         user_id = message.from_user.id
+
+
         if user_id not in INDEX_STATE:
             return
 
-        if message.text and message.text.lower() == "/cancel":
-            INDEX_STATE.pop(user_id, None)
-            return await message.reply_text("❌ Cancelled.")
 
-        forward_from = message.forward_from_chat
+        if (
+            message.text
+            and message.text.lower()
+            == "/cancel"
+        ):
+
+            INDEX_STATE.pop(
+                user_id,
+                None
+            )
+
+            return await message.reply_text(
+                "❌ Cancelled."
+            )
+
+
+        forward_from = (
+            message.forward_from_chat
+        )
+
+
         if not forward_from:
-            return await message.reply_text("⚠️ Please forward a message from the source channel.")
+
+            return await message.reply_text(
+                "⚠️ Please forward a message "
+                "from the source channel."
+            )
+
 
         chat_id = forward_from.id
-        last_msg_id = message.forward_from_message_id
-        
-        INDEX_STATE.pop(user_id, None)
-        await start_indexing_loop(client, message, chat_id, last_msg_id)
-    except Exception as err:
-        logger.error(f"🚨 [CRITICAL INPUT ERROR in index.py]: process_bulk_index_state failed", exc_info=True)
-        await message.reply_text("⚠️ An error occurred during bulk index configuration.")
+
+        last_msg_id = (
+            message.forward_from_message_id
+        )
 
 
-async def start_indexing_loop(client: Client, message: Message, chat_id: int, last_msg_id: int):
-    status_msg = await message.reply_text("⏳ Initializing Live Bulk Indexing...")
-    indexed, skipped, failed = 0, 0, 0
-    
+        if not last_msg_id:
+
+            return await message.reply_text(
+                "⚠️ Could not determine the "
+                "forwarded message ID."
+            )
+
+
+        INDEX_STATE.pop(
+            user_id,
+            None
+        )
+
+
+        await start_indexing_loop(
+            client,
+            message,
+            chat_id,
+            last_msg_id
+        )
+
+
+    except Exception:
+
+        logger.error(
+            "🚨 [CRITICAL INPUT ERROR]: "
+            "process_bulk_index_state failed",
+            exc_info=True
+        )
+
+        await message.reply_text(
+            "⚠️ An error occurred during "
+            "bulk index configuration."
+        )
+
+
+# ============================================================
+# BULK INDEXING LOOP
+# ============================================================
+
+async def start_indexing_loop(
+    client: Client,
+    message: Message,
+    chat_id: int,
+    last_msg_id: int
+):
+
+    status_msg = await message.reply_text(
+        "⏳ Initializing Live Bulk Indexing..."
+    )
+
+
+    indexed = 0
+    skipped = 0
+    failed = 0
+
+
     try:
-        for msg_id in range(1, last_msg_id + 1):
+
+        for msg_id in range(
+            1,
+            last_msg_id + 1
+        ):
+
             try:
-                msg = await client.get_messages(chat_id, msg_id)
-                if not msg or not (msg.document or msg.video):
+
+                msg = await client.get_messages(
+                    chat_id,
+                    msg_id
+                )
+
+
+                if not msg:
                     continue
 
-                media = msg.document or msg.video
+
+                media = (
+                    msg.document
+                    or msg.video
+                )
+
+
+                if not media:
+                    continue
+
+
                 if not media.file_name:
                     continue
 
+
                 file_id = media.file_id
+
                 file_name = media.file_name
-                clean_name = file_name.replace("_", " ").replace(".", " ")
+
+                clean_name = (
+                    file_name
+                    .replace("_", " ")
+                    .replace(".", " ")
+                )
+
 
                 file_data = {
                     "file_name": clean_name,
@@ -149,35 +438,137 @@ async def start_indexing_loop(client: Client, message: Message, chat_id: int, la
                     "chat_id": chat_id
                 }
 
-                if await files_col_1.find_one({"file_id": file_id}):
+
+                # ====================================================
+                # CHECK DUPLICATE IN DATABASE 1
+                # ====================================================
+
+                exists = (
+                    await files_col_1.find_one(
+                        {
+                            "file_id": file_id
+                        }
+                    )
+                )
+
+
+                if exists:
+
                     skipped += 1
+
                 else:
-                    await files_col_1.insert_one(file_data)
-                    await files_col_2.insert_one(file_data)
+
+                    await files_col_1.insert_one(
+                        file_data
+                    )
+
                     indexed += 1
 
-                # Live status update output every 5 processed records
-                if (indexed + skipped + failed) % 5 == 0:
+
+                    # ====================================================
+                    # DATABASE 2
+                    # ====================================================
+
                     try:
-                        await status_msg.edit_text(
-                            f"🔄 **Live Bulk Indexing in Progress...**\n\n"
-                            f"• Scanned Msg ID: `{msg_id}/{last_msg_id}`\n"
-                            f"• Successfully Indexed: `{indexed}`\n"
-                            f"• Skipped (Duplicates): `{skipped}`\n"
-                            f"• Failed/Non-Media: `{failed}`"
+
+                        exists_db2 = (
+                            await files_col_2.find_one(
+                                {
+                                    "file_id": file_id
+                                }
+                            )
                         )
+
+
+                        if not exists_db2:
+
+                            await files_col_2.insert_one(
+                                file_data
+                            )
+
+
                     except Exception:
-                        pass # Prevents flood-wait halt if Telegram rate-limits fast edits
-            except Exception as loop_err:
+
+                        logger.exception(
+                            "Database 2 insert failed "
+                            "for file %s",
+                            file_id
+                        )
+
+
+                # ====================================================
+                # LIVE STATUS
+                # ====================================================
+
+                processed = (
+                    indexed
+                    + skipped
+                    + failed
+                )
+
+
+                if processed % 5 == 0:
+
+                    try:
+
+                        await status_msg.edit_text(
+                            "🔄 **Live Bulk Indexing "
+                            "in Progress...**\n\n"
+                            f"• Scanned Msg ID: "
+                            f"`{msg_id}/{last_msg_id}`\n"
+                            f"• Successfully Indexed: "
+                            f"`{indexed}`\n"
+                            f"• Skipped (Duplicates): "
+                            f"`{skipped}`\n"
+                            f"• Failed/Non-Media: "
+                            f"`{failed}`"
+                        )
+
+                    except Exception:
+
+                        pass
+
+
+            except Exception:
+
                 failed += 1
+
+                logger.exception(
+                    "Error processing message ID %s",
+                    msg_id
+                )
+
                 continue
 
+
+        # ========================================================
+        # COMPLETE
+        # ========================================================
+
         await status_msg.edit_text(
-            f"✅ **Bulk Index Complete!**\n\n"
+            "✅ **Bulk Index Complete!**\n\n"
             f"• Total Indexed: `{indexed}`\n"
             f"• Total Skipped: `{skipped}`\n"
             f"• Errors/Bypassed: `{failed}`"
         )
+
+
     except Exception as e:
-        logger.error(f"🚨 [INDEX LOOP ERROR]: {e}", exc_info=True)
-        await status_msg.edit_text(f"⚠️ Indexing Error: {e}")
+
+        logger.error(
+            "🚨 [INDEX LOOP ERROR]: %s",
+            e,
+            exc_info=True
+        )
+
+
+        try:
+
+            await status_msg.edit_text(
+                f"⚠️ **Indexing Error:**\n\n"
+                f"`{e}`"
+            )
+
+        except Exception:
+
+            pass
