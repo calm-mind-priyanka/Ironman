@@ -15,8 +15,8 @@ DEFAULT_SETTINGS = {
     "imdb": True,
     "spell_check": True,
     "auto_delete": False,
-    "result_mode": True,      # True = Button Mode, False = Text Mode
-    "files_mode": True,       # True = Shortlink Mode, False = Direct Mode
+    "result_mode": True,
+    "files_mode": True,
     "files_caption": "📂 **{file_name}**\n💾 Size: {file_size}",
     "tutorial_link": "https://t.me/your_tutorial_channel",
     "movie_req_chat": "Not Set ❌",
@@ -62,20 +62,15 @@ async def build_settings_keyboard(chat_id: int):
 
 @Client.on_message(filters.command("settings"))
 async def open_settings(client: Client, message: Message):
-    if message.chat.type == "private":
-        return await message.reply_text("⚠️ This command can only be used inside group chats!")
-    
-    keyboard = await build_settings_keyboard(message.chat.id)
-    await message.reply_text(f"⚙️ **Group Settings for {message.chat.title}** (Isolated Config):", reply_markup=keyboard)
+    chat_id = message.chat.id
+    # Allow settings in PM for personal configuration or groups
+    keyboard = await build_settings_keyboard(chat_id)
+    title = message.chat.title if message.chat.title else "Personal PM"
+    await message.reply_text(f"⚙️ **Settings for {title}:**", reply_markup=keyboard)
 
 @Client.on_callback_query(filters.regex("^set#"))
 async def toggle_setting_callback(client: Client, query: CallbackQuery):
     chat_id = query.message.chat.id
-    member = await client.get_chat_member(chat_id, query.from_user.id)
-    if member.status not in ["creator", "administrator"] and query.from_user.id not in Config.ADMINS:
-        await query.answer("⚠️ Only group admins can change settings!", show_alert=True)
-        return
-
     key = query.data.split("#")[1]
     s = await get_settings(chat_id)
     new_val = not s[key]
@@ -116,7 +111,7 @@ async def movie_req_menu(client: Client, query: CallbackQuery):
 async def settings_details_callback(client: Client, query: CallbackQuery):
     s = await get_settings(query.message.chat.id)
     text = (
-        f"💡 **Current Group Settings Details:**\n\n"
+        f"💡 **Current Settings Details:**\n\n"
         f"• Chat ID: `{s['chat_id']}`\n"
         f"• Auto Filter: {s['auto_filter']}\n"
         f"• File Secure: {s['file_secure']}\n"
@@ -130,7 +125,7 @@ async def settings_details_callback(client: Client, query: CallbackQuery):
 @Client.on_callback_query(filters.regex("^set_max_results$"))
 async def max_results_menu(client: Client, query: CallbackQuery):
     s = await get_settings(query.message.chat.id)
-    text = f"ℹ️ **Max Results Per Page:**\n\nCurrent limit: `{s['max_results']}` (e.g., 8 or 10)\n\nSend a number between 1 and 20."
+    text = f"ℹ️ **Max Results Per Page:**\n\nCurrent limit: `{s['max_results']}`\n\nSend a number between 1 and 20."
     buttons = [[InlineKeyboardButton("<< Back", callback_data="back_to_settings")]]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
     GROUP_INPUT_STATE[query.from_user.id] = {"chat_id": query.message.chat.id, "type": "max_results"}
@@ -140,7 +135,7 @@ async def max_results_menu(client: Client, query: CallbackQuery):
 async def back_to_main_settings(client: Client, query: CallbackQuery):
     chat_id = query.message.chat.id
     keyboard = await build_settings_keyboard(chat_id)
-    await query.message.edit_text(f"⚙️ **Group Settings for {query.message.chat.title}**:", reply_markup=keyboard)
+    await query.message.edit_text("⚙️ **Settings Menu:**", reply_markup=keyboard)
 
 @Client.on_callback_query(filters.regex("^close_settings$"))
 async def close_settings_callback(client: Client, query: CallbackQuery):
