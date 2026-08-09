@@ -60,8 +60,11 @@ async def build_settings_keyboard(chat_id: int):
     ]
     return InlineKeyboardMarkup(buttons)
 
-@Client.on_message(filters.command("settings") & ~filters.private)
+@Client.on_message(filters.command("settings"))
 async def open_settings(client: Client, message: Message):
+    if message.chat.type == "private":
+        return await message.reply_text("⚠️ This command can only be used inside group chats!")
+    
     keyboard = await build_settings_keyboard(message.chat.id)
     await message.reply_text(f"⚙️ **Group Settings for {message.chat.title}** (Isolated Config):", reply_markup=keyboard)
 
@@ -145,6 +148,9 @@ async def close_settings_callback(client: Client, query: CallbackQuery):
 
 @Client.on_message(filters.text & filters.private)
 async def capture_group_settings_inputs(client: Client, message: Message):
+    if message.text and (message.text.startswith("/") or message.text.startswith("!")):
+        return
+
     user_id = message.from_user.id
     if user_id not in GROUP_INPUT_STATE:
         return
