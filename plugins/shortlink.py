@@ -1,3 +1,4 @@
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -30,9 +31,13 @@ async def delete_sl(client: Client, query: CallbackQuery):
     await shortlink_col.update_one({"chat_id": query.message.chat.id}, {"$unset": {"site1": "", "site2": ""}})
     await query.answer("✅ Shortlinks deleted successfully!", show_alert=True)
 
-@Client.on_message(filters.text & filters.private & ~filters.command)
+@Client.on_message(filters.text & filters.private)
 async def save_sl(client: Client, message: Message):
-    if message.from_user.id not in USER_STATE:
+    if message.text and (message.text.startswith("/") or message.text.startswith("!")):
+        return
+
+    user_id = message.from_user.id
+    if user_id not in USER_STATE:
         return
     state = USER_STATE.pop(message.from_user.id)
     val = message.text.strip()
