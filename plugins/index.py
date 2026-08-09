@@ -4,7 +4,6 @@ from pyrogram.types import Message
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import Config
 
-# Connect to Dual Databases
 db1_client = AsyncIOMotorClient(Config.DATABASE_URI)
 db1 = db1_client[Config.DATABASE_NAME]
 files_col_1 = db1["files"]
@@ -15,12 +14,8 @@ files_col_2 = db2["files"]
 
 INDEX_STATE = {}
 
-# ==========================================
-# 1. AUTO-INDEX CHANNEL (Hardcoded via Config.AUTO_INDEX_CHANNEL)
-# ==========================================
 @Client.on_message((filters.document | filters.video))
 async def auto_index_uploaded_files(client: Client, message: Message):
-    # Check if the message is coming from your hardcoded auto-index channel
     if not Config.AUTO_INDEX_CHANNEL or message.chat.id != Config.AUTO_INDEX_CHANNEL:
         return
 
@@ -44,15 +39,11 @@ async def auto_index_uploaded_files(client: Client, message: Message):
     if await files_col_1.find_one({"file_id": file_id}):
         return
 
-    # Dual Database Sync Insert
     await files_col_1.insert_one(file_data)
     await files_col_2.insert_one(file_data)
     print(f"📥 [AUTO-INDEXED LIVE] -> {clean_name}")
 
 
-# ==========================================
-# 2. MANUAL BULK INDEXING (For crawling old channels via /index)
-# ==========================================
 @Client.on_message(filters.command("index") & filters.private)
 async def index_start_command(client: Client, message: Message):
     if message.from_user.id not in Config.ADMINS:
@@ -89,8 +80,8 @@ async def process_bulk_index_state(client: Client, message: Message):
 
 
 async def start_indexing_loop(client: Client, message: Message, chat_id: int, last_msg_id: int):
-    status_msg = await message.reply_text("⏳ Bulk indexing started...")
-    indexed, skipped = 0, 0
+    status_msg = await message.reply_text("⏳ Initializing Live Bulk Indexing...")
+    indexed, skipped, failed = 0, 0, 0
     
     try:
         for msg_id in range(1, last_msg_id + 1):
@@ -118,17 +109,28 @@ async def start_indexing_loop(client: Client, message: Message, chat_id: int, la
 
                 if await files_col_1.find_one({"file_id": file_id}):
                     skipped += 1
-                    continue
+                else:
+                    await files_col_1.insert_one(file_data)
+                    await files_col_2.insert_one(file_data)
+                    indexed += 1
 
-                await files_col_1.insert_one(file_data)
-                await files_col_2.insert_one(file_data)
-                indexed += 1
-
-                if indexed % 50 == 0:
-                    await status_msg.edit_text(f"🔄 Bulk Indexing...\n• Indexed: `{indexed}`\n• Skipped: `{skipped}`")
+                # Live update every 5 items so you see real-time progress without hitting Telegram FloodLimits
+                if (indexed + skipped) % 5 == 0:
+                    await status_msg.edit_text(
+                        f"🔄 **Live Bulk Indexing in Progress...**\n\n"
+                        f"• Total Scanned: `{msg_id}/{last_msg_id}`\n"
+                        f"• Successfully Indexed: `{indexed}`\n"
+                        f"• Skipped (Duplicates): `{skipped}`"
+                    )
             except Exception:
+                failed += 1
                 continue
 
-        await status_msg.edit_text(f"✅ **Bulk Index Complete!**\n• Indexed: `{indexed}`\n• Skipped: `{skipped}`")
+        await status_msg.edit_text(
+            f"✅ **Bulk Index Complete!**\n\n"
+            f"• Total Indexed: `{indexed}`\n"
+            f"• Total Skipped: `{skipped}`\n"
+            f"• Errors/Bypassed: `{failed}`"
+        )
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Error: Make sure the bot has admin/read access in the source channel.\nDetails: {e}")
+        await status_msg.edit_text(f"⚠️ Indexing Error: {e}")
