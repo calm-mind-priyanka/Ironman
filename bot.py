@@ -12,12 +12,20 @@ from pyrogram import Client
 
 from config import Config
 
+# ============================================================
+# LOGGING
+# ============================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
 )
 
 logger = logging.getLogger("AutoFilterBot")
+
+# ============================================================
+# PLUGINS
+# ============================================================
 
 PLUGIN_MODULES = [
     "plugins.start",
@@ -31,8 +39,15 @@ PLUGIN_MODULES = [
     "plugins.admin",
 ]
 
+# ============================================================
+# BOT STATUS
+# ============================================================
+
 _bot_started = False
 
+# ============================================================
+# CONFIGURATION CHECK
+# ============================================================
 
 def validate_config():
     required = {
@@ -44,35 +59,52 @@ def validate_config():
     }
 
     missing = [name for name, value in required.items() if not value]
+
     if missing:
         raise RuntimeError("Missing required configuration: " + ", ".join(missing))
 
     if not Config.DATABASE_URI_2:
         raise RuntimeError("DATABASE_URI_2 is missing")
 
+# ============================================================
+# MONGODB CHECK
+# ============================================================
 
 async def check_databases():
     logger.info("🔌 Checking MongoDB connection 1...")
+    
     client1 = AsyncIOMotorClient(
         Config.DATABASE_URI,
         serverSelectionTimeoutMS=8000,
         connectTimeoutMS=8000,
     )
-    await client1.admin.command("ping")
-    logger.info("✅ MongoDB connection 1 OK")
+    
+    try:
+        await client1.admin.command("ping")
+        logger.info("✅ MongoDB connection 1 OK")
+    finally:
+        client1.close()
 
     if Config.DATABASE_URI_2 != Config.DATABASE_URI:
         logger.info("🔌 Checking MongoDB connection 2...")
+        
         client2 = AsyncIOMotorClient(
             Config.DATABASE_URI_2,
             serverSelectionTimeoutMS=8000,
             connectTimeoutMS=8000,
         )
-        await client2.admin.command("ping")
-        logger.info("✅ MongoDB connection 2 OK")
+        
+        try:
+            await client2.admin.command("ping")
+            logger.info("✅ MongoDB connection 2 OK")
+        finally:
+            client2.close()
     else:
         logger.info("ℹ️ DATABASE_URI_2 is the same as DATABASE_URI")
 
+# ============================================================
+# PLUGIN CHECK
+# ============================================================
 
 def check_plugins():
     logger.info("🔎 Checking plugin imports...")
@@ -91,6 +123,9 @@ def check_plugins():
 
     logger.info("✅ All plugins imported successfully")
 
+# ============================================================
+# KOYEB HEALTH SERVER
+# ============================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -107,6 +142,9 @@ class HealthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+# ============================================================
+# START HEALTH SERVER
+# ============================================================
 
 def start_web_server():
     port = int(os.environ.get("PORT", "8000"))
@@ -114,6 +152,9 @@ def start_web_server():
     logger.info("🌐 Health server listening on port %s", port)
     server.serve_forever()
 
+# ============================================================
+# PYROGRAM CLIENT
+# ============================================================
 
 app = Client(
     "AutoFilterBot",
@@ -123,6 +164,9 @@ app = Client(
     plugins={"root": "plugins"},
 )
 
+# ============================================================
+# STARTUP CHECKS
+# ============================================================
 
 async def startup_checks():
     logger.info("🔍 Checking configuration...")
@@ -131,24 +175,52 @@ async def startup_checks():
     check_plugins()
     await check_databases()
 
+# ============================================================
+# MAIN
+# ============================================================
 
 if __name__ == "__main__":
     logger.info("🤖 AutoFilterBot starting...")
 
+    # Start Koyeb health server
     threading.Thread(target=start_web_server, daemon=True).start()
 
-    try:
-        asyncio.run(startup_checks())
-    except Exception as exc:
-        logger.critical("❌ Startup checks failed: %s", exc)
-        logger.critical(traceback.format_exc())
-        sys.exit(1)
+    # Create ONE event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     try:
+        # Startup checks
+        loop.run_until_complete(startup_checks())
+
+        # Start Pyrogram
         logger.info("🚀 Starting Pyrogram...")
-        app.run()
+        loop.run_until_complete(app.start())
+
+        # Bot is running now
         _bot_started = True
+        logger.info("✅ Pyrogram started successfully")
+        logger.info("🤖 AutoFilterBot is now ONLINE")
+
+        # Keep event loop alive
+        loop.run_forever()
+
+    except KeyboardInterrupt:
+        logger.info("🛑 Shutdown requested")
     except Exception:
         logger.critical("❌ Pyrogram stopped/crashed")
         logger.critical(traceback.format_exc())
         sys.exit(1)
+    finally:
+        # Stop Pyrogram cleanly
+        try:
+            if app.is_connected:
+                loop.run_until_complete(app.stop())
+        except Exception:
+            logger.exception("⚠️ Error while stopping Pyrogram")
+
+        # Close event loop
+        try:
+            loop.close()
+        except Exception:
+            pass
