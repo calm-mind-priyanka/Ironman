@@ -1,17 +1,10 @@
-"""
-Shared MongoDB connections for the bot.
-
-All plugins use the database handles from this module instead
-of creating their own MongoDB clients.
-"""
-
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from config import Config
 
 
 # ============================================================
-# DATABASE CLIENT 1
+# DATABASE 1
 # ============================================================
 
 db1_client = AsyncIOMotorClient(
@@ -24,7 +17,7 @@ db1 = db1_client[
 
 
 # ============================================================
-# DATABASE CLIENT 2
+# DATABASE 2
 # ============================================================
 
 db2_client = AsyncIOMotorClient(
@@ -37,7 +30,7 @@ db2 = db2_client[
 
 
 # ============================================================
-# COMMON COLLECTIONS
+# COLLECTIONS - DATABASE 1
 # ============================================================
 
 users_col = db1["users"]
@@ -50,12 +43,12 @@ forcesub_col = db1["forcesub_channels"]
 
 shortlink_col = db1["shortlinks"]
 
-
-# ============================================================
-# FILE COLLECTIONS
-# ============================================================
-
 files_col_1 = db1["files"]
+
+
+# ============================================================
+# COLLECTIONS - DATABASE 2
+# ============================================================
 
 files_col_2 = db2["files"]
 
