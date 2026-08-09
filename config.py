@@ -6,7 +6,7 @@ class Config:
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "your_bot_token")
     
     # Dual Database Active Mode URIs (DB1 & DB2)
-    DATABASE_URI = os.environ.get("DATABASE_URI", "mongodb+srv://cluster0...")
+    DATABASE_URI = os.environ.get("DATABASE_URI", "mongodb+srv://rajibchaun_db_user:Fa1SV672h6xrxFxR@cluster0.pfgtal2.mongodb.net/?appName=Cluster0")
     DATABASE_URI_2 = os.environ.get("DATABASE_URI_2", "mongodb+srv://cluster1...")
     DATABASE_NAME = os.environ.get("DATABASE_NAME", "Cluster0")
     
