@@ -29,8 +29,12 @@ async def search_dual_db(regex, limit):
     res1, res2 = await asyncio.gather(c1.to_list(length=limit), c2.to_list(length=limit))
     return res1 + res2
 
-@Client.on_message(filters.text & ~filters.private & ~filters.command)
+@Client.on_message(filters.text & ~filters.private)
 async def group_autofilter_engine(client: Client, message: Message):
+    # Ignore bot commands explicitly typed inside text messages
+    if message.text.startswith("/") or message.text.startswith("!"):
+        return
+
     chat_id = message.chat.id
     settings = await get_settings(chat_id)
     if not settings["auto_filter"]:
