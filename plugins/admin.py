@@ -10,7 +10,7 @@ from db import premium_col, users_col
 logger = logging.getLogger(__name__)
 
 
-@Client.on_message(filters.command("add_premium") & filters.private)
+@Client.on_message(filters.command("add_premium") & filters.private, group=0)
 async def add_premium_cmd(client: Client, message: Message):
     try:
         if message.from_user.id not in getattr(Config, "ADMINS", []):
@@ -49,7 +49,7 @@ async def add_premium_cmd(client: Client, message: Message):
         await message.reply_text("⚠️ An internal error occurred while processing this command.")
 
 
-@Client.on_message(filters.command("remove_premium") & filters.private)
+@Client.on_message(filters.command("remove_premium") & filters.private, group=0)
 async def remove_premium_cmd(client: Client, message: Message):
     try:
         if message.from_user.id not in getattr(Config, "ADMINS", []):
