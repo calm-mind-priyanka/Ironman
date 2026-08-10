@@ -95,7 +95,7 @@ async def delete_sl(client: Client, query: CallbackQuery):
         await query.answer("⚠️ Failed to delete shortlinks.", show_alert=True)
 
 
-@Client.on_message(filters.text & filters.private)
+@Client.on_message(filters.text & filters.private, group=4)
 async def save_sl(client: Client, message: Message):
     try:
         if message.text and (message.text.startswith("/") or message.text.startswith("!")):
