@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 INDEX_STATE = {}
 
 
-@Client.on_message(filters.document | filters.video)
+@Client.on_message(filters.document | filters.video, group=5)
 async def auto_index_uploaded_files(client: Client, message: Message):
     try:
         auto_index_channel = getattr(Config, "AUTO_INDEX_CHANNEL", None)
@@ -52,7 +52,7 @@ async def auto_index_uploaded_files(client: Client, message: Message):
         logger.error("🚨 [AUTO-INDEX ERROR]: auto_index_uploaded_files failed", exc_info=True)
 
 
-@Client.on_message(filters.command("index") & filters.private)
+@Client.on_message(filters.command("index") & filters.private, group=0)
 async def index_start_command(client: Client, message: Message):
     try:
         admins = getattr(Config, "ADMINS", [])
@@ -73,7 +73,7 @@ async def index_start_command(client: Client, message: Message):
         await message.reply_text("⚠️ An error occurred while starting the index process.")
 
 
-@Client.on_message(filters.command("stats") & filters.private)
+@Client.on_message(filters.command("stats") & filters.private, group=0)
 async def database_stats_command(client: Client, message: Message):
     try:
         admins = getattr(Config, "ADMINS", [])
@@ -103,7 +103,7 @@ async def database_stats_command(client: Client, message: Message):
         await message.reply_text("⚠️ Failed to fetch database statistics.")
 
 
-@Client.on_message(filters.private & filters.text)
+@Client.on_message(filters.private & filters.text, group=2)
 async def process_bulk_index_state(client: Client, message: Message):
     try:
         user_id = message.from_user.id
