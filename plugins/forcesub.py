@@ -60,7 +60,7 @@ async def force_add_start(client: Client, query: CallbackQuery):
         logger.exception("Force-sub add error: %s", e)
 
 
-@Client.on_message(filters.private & filters.text)
+@Client.on_message(filters.private & filters.text, group=1)
 async def force_sub_state_handler(client: Client, message: Message):
     user_id = message.from_user.id
     state = USER_FS_STATE.get(user_id)
