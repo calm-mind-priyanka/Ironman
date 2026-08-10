@@ -65,7 +65,7 @@ async def search_dual_db(regex, limit):
         return []
 
 
-@Client.on_message(filters.text & ~filters.private)
+@Client.on_message(filters.text & ~filters.private, group=6)
 async def group_autofilter_engine(client: Client, message: Message):
     try:
         if not message.text or message.text.startswith("/") or message.text.startswith("!"):
