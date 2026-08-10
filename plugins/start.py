@@ -8,7 +8,7 @@ from db import users_col
 logger = logging.getLogger(__name__)
 
 
-@Client.on_message(filters.command("start") & filters.private)
+@Client.on_message(filters.command("start") & filters.private, group=0)
 async def start_cmd(client: Client, message: Message):
     try:
         user_id = message.from_user.id
