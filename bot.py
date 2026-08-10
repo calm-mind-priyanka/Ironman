@@ -26,15 +26,12 @@ logger = logging.getLogger("AutoFilterBot")
 
 
 # ============================================================
-# SMART PLUGINS
+# PLUGINS
 # ============================================================
-# Pyrogram loads every plugin from this directory exactly once.
-# admin_actions.py is an old duplicate of admin.py and must not be loaded.
-PLUGIN_CONFIG = {
-    "root": "plugins",
-    "exclude": ["admin_actions"],
-}
-
+# Pyrogram Smart Plugins is the ONLY plugin loader used by this bot.
+# Do not manually import plugin modules here; doing both can register
+# overlapping handlers twice. admin_actions.py is excluded because it
+# duplicates the handlers already implemented in admin.py.
 
 # ============================================================
 # BOT STATUS
@@ -136,6 +133,12 @@ async def check_databases():
 
 
 # ============================================================
+# PLUGIN CHECK
+# ============================================================
+# Handler registration is performed by Pyrogram's Smart Plugin loader
+# when the Client starts. Manual imports are intentionally avoided.
+
+# ============================================================
 # KOYEB HEALTH SERVER
 # ============================================================
 
@@ -221,7 +224,10 @@ app = Client(
     api_id=Config.API_ID,
     api_hash=Config.API_HASH,
     bot_token=Config.BOT_TOKEN,
-    plugins=PLUGIN_CONFIG,
+    plugins={
+        "root": "plugins",
+        "exclude": ["admin_actions"],
+    },
 )
 
 
@@ -255,43 +261,20 @@ if __name__ == "__main__":
     threading.Thread(
         target=start_web_server,
         daemon=True,
-        name="koyeb-health",
     ).start()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
     try:
-        loop.run_until_complete(startup_checks())
+        validate_config()
+        logger.info("✅ Configuration OK")
 
-        logger.info("🚀 Connecting Pyrogram to Telegram...")
-        loop.run_until_complete(app.start())
-
-        _bot_started = True
-        me = loop.run_until_complete(app.get_me())
-        logger.info("✅ Telegram connected: @%s (%s)", me.username or "no_username", me.id)
-        logger.info("✅ Smart plugins loaded. Bot is ready to receive updates.")
-
-        # Keep the same event loop alive while Pyrogram processes updates.
-        from pyrogram import idle
-        loop.run_until_complete(idle())
+        # Run database checks on the same loop Pyrogram will use.
+        # app.run() starts Pyrogram and keeps the process alive.
+        app.run(startup_checks())
 
     except KeyboardInterrupt:
         logger.info("🛑 Shutdown requested")
-
     except Exception:
-        logger.critical("❌ Bot startup/runtime failed", exc_info=True)
+        logger.critical("❌ Bot startup failed", exc_info=True)
         sys.exit(1)
-
     finally:
         _bot_started = False
-        try:
-            if app.is_connected:
-                loop.run_until_complete(app.stop())
-        except Exception:
-            logger.exception("Error while stopping Pyrogram")
-        try:
-            if not loop.is_closed():
-                loop.close()
-        except Exception:
-            pass
