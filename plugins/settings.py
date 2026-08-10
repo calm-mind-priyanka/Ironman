@@ -84,7 +84,7 @@ async def build_settings_keyboard(chat_id: int):
     return InlineKeyboardMarkup(buttons)
 
 
-@Client.on_message(filters.command("settings"))
+@Client.on_message(filters.command("settings") & filters.private, group=0)
 async def open_settings(client: Client, message: Message):
     try:
         chat_id = message.chat.id
@@ -226,7 +226,7 @@ async def close_settings_callback(client: Client, query: CallbackQuery):
         logger.error("🚨 [CALLBACK ERROR]: close_settings failed", exc_info=True)
 
 
-@Client.on_message(filters.text & filters.private)
+@Client.on_message(filters.text & filters.private, group=3)
 async def capture_group_settings_inputs(client: Client, message: Message):
     try:
         if not message.text:
